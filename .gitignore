@@ -4,3 +4,5 @@
 .well-known/
 test.js
 node_modules/
+cache.db
+*.db
