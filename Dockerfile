@@ -1,6 +1,9 @@
 # Use official Node.js LTS image
 FROM node:18-alpine
 
+# Install build tools for native modules (better-sqlite3)
+RUN apk add --no-cache python3 make g++
+
 # Set working directory
 WORKDIR /app
 
