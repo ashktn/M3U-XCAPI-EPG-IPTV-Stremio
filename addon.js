@@ -100,11 +100,24 @@ function buildTMDBStreamCache(addonInstance) {
     for (const movie of movies) {
         if (movie.tmdb_id) {
             const streamUrl = `${xtreamUrl}/movie/${xtreamUsername}/${xtreamPassword}/${movie.stream_id || movie.id.replace('iptv_vod_', '')}.${movie.container_extension || 'mkv'}`;
-            tmdbToStreamCache.set(`tmdb:${movie.tmdb_id}`, {
-                url: streamUrl,
-                title: movie.name,
-                type: 'movie'
-            });
+            
+            const existing = tmdbToStreamCache.get(`tmdb:${movie.tmdb_id}`);
+            if (existing && existing.type === 'movie' && existing.streams) {
+                existing.streams.push({
+                    url: streamUrl,
+                    title: movie.name,
+                    quality: movie.quality || null
+                });
+            } else {
+                tmdbToStreamCache.set(`tmdb:${movie.tmdb_id}`, {
+                    streams: [{
+                        url: streamUrl,
+                        title: movie.name,
+                        quality: movie.quality || null
+                    }],
+                    type: 'movie'
+                });
+            }
         }
     }
     
@@ -795,21 +808,27 @@ async function createAddon(config) {
                                 const episodesObj = infoJson.episodes || {};
                                 
                                 const seasonEpisodes = episodesObj[season] || [];
-                                const ep = seasonEpisodes.find(e => parseInt(e.episode_num, 10) === episode);
+                                const matchingEps = seasonEpisodes.filter(e => parseInt(e.episode_num, 10) === episode);
                                 
-                                if (ep) {
-                                    const container = ep.container_extension || 'mp4';
-                                    const epUrl = `${config.xtreamUrl}/series/${encodeURIComponent(config.xtreamUsername)}/${encodeURIComponent(config.xtreamPassword)}/${ep.id}.${container}`;
+                                if (matchingEps && matchingEps.length > 0) {
+                                    const streams = matchingEps.map((ep, idx) => {
+                                        const container = ep.container_extension || 'mp4';
+                                        const epUrl = `${config.xtreamUrl}/series/${encodeURIComponent(config.xtreamUsername)}/${encodeURIComponent(config.xtreamPassword)}/${ep.id}.${container}`;
+                                        
+                                        return {
+                                            url: epUrl,
+                                            title: matchingEps.length > 1 
+                                                ? `${ep.title || `S${season}E${episode}`} (Stream ${idx + 1})`
+                                                : ep.title || `S${season}E${episode}`,
+                                            behaviorHints: { notWebReady: true }
+                                        };
+                                    });
                                     
                                     if (addonInstance.config.debug) {
-                                        console.log('[DEBUG] Series Episode Stream request', { imdb: id, tmdb: tmdbId, season, episode, url: epUrl });
+                                        console.log('[DEBUG] Series Episode Stream request', { imdb: id, tmdb: tmdbId, season, episode, count: streams.length });
                                     }
                                     
-                                    return { streams: [{
-                                        url: epUrl,
-                                        title: ep.title || `S${season}E${episode}`,
-                                        behaviorHints: { notWebReady: true }
-                                    }] };
+                                    return { streams };
                                 }
                             }
                         } catch (e) {
@@ -820,14 +839,16 @@ async function createAddon(config) {
                     }
                     
                     if (addonInstance.config.debug) {
-                        console.log('[DEBUG] IMDB Stream request', { imdb: id, tmdb: tmdbId, url: streamData.url });
+                        console.log('[DEBUG] IMDB Stream request', { imdb: id, tmdb: tmdbId, count: streamData.streams?.length || 1 });
                     }
                     
-                    return { streams: [{
-                        url: streamData.url,
-                        title: streamData.title,
+                    const streams = (streamData.streams || []).map((s, idx) => ({
+                        url: s.url,
+                        title: s.quality ? `${s.title} [${s.quality}]` : (streamData.streams.length > 1 ? `${s.title} (Stream ${idx + 1})` : s.title),
                         behaviorHints: { notWebReady: true }
-                    }] };
+                    }));
+                    
+                    return { streams };
                 }
                 
                 if (id.startsWith('iptv_series_ep_')) {
