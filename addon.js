@@ -860,6 +860,10 @@ async function createAddon(config) {
                                 const seasonKey = String(season);
                                 let seasonEpisodes = episodesObj[seasonKey] || episodesObj[season];
                                 
+                                if (addonInstance.config.debug) {
+                                    console.log('[DEBUG] Season episodes raw', { seasonKey, count: seasonEpisodes?.length || 0, eps: seasonEpisodes?.map(e => ({ num: e.episode_num, title: e.title, id: e.id })) });
+                                }
+                                
                                 let matchingEps = [];
                                 if (seasonEpisodes && seasonEpisodes.length > 0) {
                                     matchingEps = seasonEpisodes.filter(e => parseInt(e.episode_num, 10) === episode);
