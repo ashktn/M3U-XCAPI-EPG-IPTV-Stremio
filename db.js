@@ -1,4 +1,5 @@
 const Database = require('better-sqlite3');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
@@ -99,13 +100,15 @@ function getCacheStats(providerKey) {
 }
 
 function createProviderKey(config) {
+    let rawKey;
     if (config.provider === 'xtream' && config.xtreamUrl && config.xtreamUsername && config.xtreamPassword) {
-        return `${config.xtreamUrl}:${config.xtreamUsername}:${config.xtreamPassword}`;
+        rawKey = `${config.xtreamUrl}:${config.xtreamUsername}:${config.xtreamPassword}`;
+    } else if (config.m3uUrl) {
+        rawKey = config.m3uUrl;
+    } else {
+        rawKey = config.provider || 'unknown';
     }
-    if (config.m3uUrl) {
-        return config.m3uUrl;
-    }
-    return config.provider || 'unknown';
+    return crypto.createHash('md5').update(rawKey).digest('hex');
 }
 
 module.exports = {
