@@ -146,6 +146,9 @@ async function fetchData(addonInstance) {
         plot: s.plot,
         year: s.releasedate ? new Date(s.releasedate).getFullYear() : null,
         category: cat,
+                tmdb_id: s.tmdb || null,
+                stream_id: s.stream_id,
+                container_extension: s.container_extension,
         attributes: {
           "tvg-logo": s.stream_icon,
           "group-title": cat,
@@ -190,6 +193,7 @@ async function fetchData(addonInstance) {
                 poster: s.cover,
                 plot: s.plot,
                 category: cat,
+                                tmdb_id: s.tmdb || null,
                 attributes: {
                   "tvg-logo": s.cover,
                   "group-title": cat,

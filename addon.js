@@ -28,6 +28,10 @@ const ADDON_NAME = "M3U/EPG TV Addon";
 const ADDON_ID = "org.stremio.m3u-epg-addon";
 
 const DEBUG_ENV = (process.env.DEBUG_MODE || '').toLowerCase() === 'true';
+
+const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
+
+const tmdbToStreamCache = new Map();
 function makeLogger(cfgDebug) {
     const enabled = !!cfgDebug || DEBUG_ENV;
     return {
@@ -58,6 +62,63 @@ async function redisSetJSON(key, value, ttl) {
     try {
         await redisClient.set(key, JSON.stringify(value), 'PX', ttl);
     } catch { /* ignore */ }
+}
+
+async function lookupIMDBtoTMDB(imdbId, log) {
+    if (!TMDB_API_KEY) {
+        log?.warn('TMDB_API_KEY not configured');
+        return null;
+    }
+    
+    const cacheKey = `imdb_tmdb:${imdbId}`;
+    const cached = tmdbToStreamCache.get(cacheKey);
+    if (cached) return cached;
+    
+    try {
+        const url = `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?external_source=imdb_id&api_key=${TMDB_API_KEY}`;
+        const resp = await fetch(url, { timeout: 10000 });
+        if (!resp.ok) {
+            log?.warn('TMDB lookup failed', imdbId, resp.status);
+            return null;
+        }
+        const data = await resp.json();
+        const tmdbId = data.movie_results?.[0]?.id || data.tv_results?.[0]?.id || null;
+        if (tmdbId) {
+            tmdbToStreamCache.set(cacheKey, tmdbId);
+        }
+        return tmdbId;
+    } catch (e) {
+        log?.warn('TMDB lookup error', imdbId, e.message);
+        return null;
+    }
+}
+
+function buildTMDBStreamCache(addonInstance) {
+    const { movies, series, config } = addonInstance;
+    const { xtreamUrl, xtreamUsername, xtreamPassword } = config;
+    
+    for (const movie of movies) {
+        if (movie.tmdb_id) {
+            const streamUrl = `${xtreamUrl}/movie/${xtreamUsername}/${xtreamPassword}/${movie.stream_id || movie.id.replace('iptv_vod_', '')}.${movie.container_extension || 'mkv'}`;
+            tmdbToStreamCache.set(`tmdb:${movie.tmdb_id}`, {
+                url: streamUrl,
+                title: movie.name,
+                type: 'movie'
+            });
+        }
+    }
+    
+    for (const s of series) {
+        if (s.tmdb_id) {
+            tmdbToStreamCache.set(`tmdb:${s.tmdb_id}`, {
+                seriesId: s.series_id || s.id.replace('iptv_series_', ''),
+                title: s.name,
+                type: 'series'
+            });
+        }
+    }
+    
+    addonInstance.log?.debug('TMDB stream cache built', { movies: movies.length, series: series.length });
 }
 
 function stableStringify(obj) {
@@ -640,7 +701,7 @@ async function createAddon(config) {
                 genres: []
             }
         ],
-        idPrefixes: ["iptv_"],
+        idPrefixes: ["iptv_", "tt"],
         behaviorHints: {
             configurable: true,
             configurationRequired: false
@@ -675,6 +736,10 @@ async function createAddon(config) {
             console.error('[ADDON] Initial update failed:', e);
         }
         addonInstance.buildGenresInManifest();
+        
+        if (TMDB_API_KEY) {
+            buildTMDBStreamCache(addonInstance);
+        }
         
         // Pass the fully populated manifest to builder
         // IMPORTANT: We must ensure 'manifest' object has 'catalogs[].genres' populated BEFORE creating builder
@@ -738,6 +803,36 @@ async function createAddon(config) {
 
         builder.defineStreamHandler(async ({ type, id }) => {
             try {
+                if (id.startsWith('tt')) {
+                    if (!TMDB_API_KEY) {
+                        return { streams: [] };
+                    }
+                    
+                    const tmdbId = await lookupIMDBtoTMDB(id, addonInstance.log);
+                    if (!tmdbId) {
+                        return { streams: [] };
+                    }
+                    
+                    const streamData = tmdbToStreamCache.get(`tmdb:${tmdbId}`);
+                    if (!streamData) {
+                        return { streams: [] };
+                    }
+                    
+                    if (streamData.type === 'series') {
+                        return { streams: [] };
+                    }
+                    
+                    if (addonInstance.config.debug) {
+                        console.log('[DEBUG] IMDB Stream request', { imdb: id, tmdb: tmdbId, url: streamData.url });
+                    }
+                    
+                    return { streams: [{
+                        url: streamData.url,
+                        title: streamData.title,
+                        behaviorHints: { notWebReady: true }
+                    }] };
+                }
+                
                 if (id.startsWith('iptv_series_ep_')) {
                     const stream = addonInstance.getStream(id);
                     if (!stream) return { streams: [] };
