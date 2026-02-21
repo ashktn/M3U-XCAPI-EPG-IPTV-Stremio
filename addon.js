@@ -808,7 +808,18 @@ async function createAddon(config) {
                         return { streams: [] };
                     }
                     
-                    const tmdbId = await lookupIMDBtoTMDB(id, addonInstance.log);
+                    let imdbId = id;
+                    let season = null;
+                    let episode = null;
+                    
+                    if (id.includes(':')) {
+                        const parts = id.split(':');
+                        imdbId = parts[0];
+                        season = parseInt(parts[1], 10);
+                        episode = parseInt(parts[2], 10);
+                    }
+                    
+                    const tmdbId = await lookupIMDBtoTMDB(imdbId, addonInstance.log);
                     if (!tmdbId) {
                         return { streams: [] };
                     }
@@ -819,6 +830,42 @@ async function createAddon(config) {
                     }
                     
                     if (streamData.type === 'series') {
+                        if (!season || !episode) {
+                            return { streams: [] };
+                        }
+                        
+                        const seriesId = streamData.seriesId;
+                        const { config } = addonInstance;
+                        const base = `${config.xtreamUrl}/player_api.php?username=${encodeURIComponent(config.xtreamUsername)}&password=${encodeURIComponent(config.xtreamPassword)}`;
+                        
+                        try {
+                            const infoResp = await fetch(`${base}&action=get_series_info&series_id=${encodeURIComponent(seriesId)}`, { timeout: 25000 });
+                            if (infoResp.ok) {
+                                const infoJson = await infoResp.json();
+                                const episodesObj = infoJson.episodes || {};
+                                
+                                const seasonEpisodes = episodesObj[season] || [];
+                                const ep = seasonEpisodes.find(e => parseInt(e.episode_num, 10) === episode);
+                                
+                                if (ep) {
+                                    const container = ep.container_extension || 'mp4';
+                                    const epUrl = `${config.xtreamUrl}/series/${encodeURIComponent(config.xtreamUsername)}/${encodeURIComponent(config.xtreamPassword)}/${ep.id}.${container}`;
+                                    
+                                    if (addonInstance.config.debug) {
+                                        console.log('[DEBUG] Series Episode Stream request', { imdb: id, tmdb: tmdbId, season, episode, url: epUrl });
+                                    }
+                                    
+                                    return { streams: [{
+                                        url: epUrl,
+                                        title: ep.title || `S${season}E${episode}`,
+                                        behaviorHints: { notWebReady: true }
+                                    }] };
+                                }
+                            }
+                        } catch (e) {
+                            addonInstance.log?.warn('Series episode fetch failed', seriesId, e.message);
+                        }
+                        
                         return { streams: [] };
                     }
                     
