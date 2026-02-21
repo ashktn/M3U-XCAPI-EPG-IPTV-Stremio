@@ -19,16 +19,20 @@ function getDb() {
     
     db.exec(`
         CREATE TABLE IF NOT EXISTS imdb_tmdb (
-            imdb_id TEXT PRIMARY KEY,
+            provider_key TEXT NOT NULL,
+            imdb_id TEXT NOT NULL,
             tmdb_id INTEGER NOT NULL,
-            created_at INTEGER DEFAULT (strftime('%s', 'now'))
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            PRIMARY KEY (provider_key, imdb_id)
         );
         
         CREATE TABLE IF NOT EXISTS tmdb_streams (
-            tmdb_id INTEGER PRIMARY KEY,
+            provider_key TEXT NOT NULL,
+            tmdb_id INTEGER NOT NULL,
             type TEXT NOT NULL,
             data TEXT NOT NULL,
-            updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+            updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+            PRIMARY KEY (provider_key, tmdb_id)
         );
         
         CREATE INDEX IF NOT EXISTS idx_imdb_tmdb_tmdb ON imdb_tmdb(tmdb_id);
@@ -39,23 +43,23 @@ function getDb() {
     return db;
 }
 
-function getIMDBtoTMDB(imdbId) {
-    const stmt = getDb().prepare('SELECT tmdb_id FROM imdb_tmdb WHERE imdb_id = ?');
-    const row = stmt.get(imdbId);
+function getIMDBtoTMDB(providerKey, imdbId) {
+    const stmt = getDb().prepare('SELECT tmdb_id FROM imdb_tmdb WHERE provider_key = ? AND imdb_id = ?');
+    const row = stmt.get(providerKey, imdbId);
     return row ? row.tmdb_id : null;
 }
 
-function setIMDBtoTMDB(imdbId, tmdbId) {
+function setIMDBtoTMDB(providerKey, imdbId, tmdbId) {
     const stmt = getDb().prepare(`
-        INSERT OR REPLACE INTO imdb_tmdb (imdb_id, tmdb_id, created_at)
-        VALUES (?, ?, strftime('%s', 'now'))
+        INSERT OR REPLACE INTO imdb_tmdb (provider_key, imdb_id, tmdb_id, created_at)
+        VALUES (?, ?, ?, strftime('%s', 'now'))
     `);
-    stmt.run(imdbId, tmdbId);
+    stmt.run(providerKey, imdbId, tmdbId);
 }
 
-function getTMDBStreams(tmdbId) {
-    const stmt = getDb().prepare('SELECT type, data FROM tmdb_streams WHERE tmdb_id = ?');
-    const row = stmt.get(tmdbId);
+function getTMDBStreams(providerKey, tmdbId) {
+    const stmt = getDb().prepare('SELECT type, data FROM tmdb_streams WHERE provider_key = ? AND tmdb_id = ?');
+    const row = stmt.get(providerKey, tmdbId);
     if (!row) return null;
     return {
         type: row.type,
@@ -63,12 +67,12 @@ function getTMDBStreams(tmdbId) {
     };
 }
 
-function setTMDBStreams(tmdbId, type, data) {
+function setTMDBStreams(providerKey, tmdbId, type, data) {
     const stmt = getDb().prepare(`
-        INSERT OR REPLACE INTO tmdb_streams (tmdb_id, type, data, updated_at)
-        VALUES (?, ?, ?, strftime('%s', 'now'))
+        INSERT OR REPLACE INTO tmdb_streams (provider_key, tmdb_id, type, data, updated_at)
+        VALUES (?, ?, ?, ?, strftime('%s', 'now'))
     `);
-    stmt.run(tmdbId, type, JSON.stringify(data));
+    stmt.run(providerKey, tmdbId, type, JSON.stringify(data));
 }
 
 function clearAllCache() {
@@ -76,13 +80,32 @@ function clearAllCache() {
     console.log('[SQLITE] Cache cleared');
 }
 
-function getCacheStats() {
+function getCacheStats(providerKey) {
     const db = getDb();
-    const imdbCount = db.prepare('SELECT COUNT(*) as count FROM imdb_tmdb').get().count;
-    const streamCount = db.prepare('SELECT COUNT(*) as count FROM tmdb_streams').get().count;
-    const movieCount = db.prepare("SELECT COUNT(*) as count FROM tmdb_streams WHERE type = 'movie'").get().count;
-    const seriesCount = db.prepare("SELECT COUNT(*) as count FROM tmdb_streams WHERE type = 'series'").get().count;
+    let imdbCount, streamCount, movieCount, seriesCount;
+    
+    if (providerKey) {
+        imdbCount = db.prepare('SELECT COUNT(*) as count FROM imdb_tmdb WHERE provider_key = ?').get(providerKey).count;
+        streamCount = db.prepare('SELECT COUNT(*) as count FROM tmdb_streams WHERE provider_key = ?').get(providerKey).count;
+        movieCount = db.prepare("SELECT COUNT(*) as count FROM tmdb_streams WHERE provider_key = ? AND type = 'movie'").get(providerKey).count;
+        seriesCount = db.prepare("SELECT COUNT(*) as count FROM tmdb_streams WHERE provider_key = ? AND type = 'series'").get(providerKey).count;
+    } else {
+        imdbCount = db.prepare('SELECT COUNT(*) as count FROM imdb_tmdb').get().count;
+        streamCount = db.prepare('SELECT COUNT(*) as count FROM tmdb_streams').get().count;
+        movieCount = db.prepare("SELECT COUNT(*) as count FROM tmdb_streams WHERE type = 'movie'").get().count;
+        seriesCount = db.prepare("SELECT COUNT(*) as count FROM tmdb_streams WHERE type = 'series'").get().count;
+    }
     return { imdbCount, streamCount, movieCount, seriesCount };
+}
+
+function createProviderKey(config) {
+    if (config.provider === 'xtream' && config.xtreamUrl && config.xtreamUsername && config.xtreamPassword) {
+        return `${config.xtreamUrl}:${config.xtreamUsername}:${config.xtreamPassword}`;
+    }
+    if (config.m3uUrl) {
+        return config.m3uUrl;
+    }
+    return config.provider || 'unknown';
 }
 
 module.exports = {
@@ -92,5 +115,6 @@ module.exports = {
     getTMDBStreams,
     setTMDBStreams,
     clearAllCache,
-    getCacheStats
+    getCacheStats,
+    createProviderKey
 };
