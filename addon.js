@@ -5,6 +5,7 @@ require('dotenv').config();
 const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
+const db = require("./db");
 const fetch = require('node-fetch');
 
 let redisClient = null;
@@ -31,7 +32,6 @@ const DEBUG_ENV = (process.env.DEBUG_MODE || '').toLowerCase() === 'true';
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 
-const tmdbToStreamCache = new Map();
 function makeLogger(cfgDebug) {
     const enabled = !!cfgDebug || DEBUG_ENV;
     return {
@@ -70,8 +70,7 @@ async function lookupIMDBtoTMDB(imdbId, log) {
         return null;
     }
     
-    const cacheKey = `imdb_tmdb:${imdbId}`;
-    const cached = tmdbToStreamCache.get(cacheKey);
+    const cached = db.getIMDBtoTMDB(imdbId);
     if (cached) return cached;
     
     try {
@@ -84,7 +83,7 @@ async function lookupIMDBtoTMDB(imdbId, log) {
         const data = await resp.json();
         const tmdbId = data.movie_results?.[0]?.id || data.tv_results?.[0]?.id || null;
         if (tmdbId) {
-            tmdbToStreamCache.set(cacheKey, tmdbId);
+            db.setIMDBtoTMDB(imdbId, tmdbId);
         }
         return tmdbId;
     } catch (e) {
@@ -101,21 +100,21 @@ function buildTMDBStreamCache(addonInstance) {
         if (movie.tmdb_id) {
             const streamUrl = `${xtreamUrl}/movie/${xtreamUsername}/${xtreamPassword}/${movie.stream_id || movie.id.replace('iptv_vod_', '')}.${movie.container_extension || 'mkv'}`;
             
-            const existing = tmdbToStreamCache.get(`tmdb:${movie.tmdb_id}`);
+            const existing = db.getTMDBStreams(movie.tmdb_id);
             if (existing && existing.type === 'movie' && existing.streams) {
                 existing.streams.push({
                     url: streamUrl,
                     title: movie.name,
                     quality: movie.quality || null
                 });
+                db.setTMDBStreams(movie.tmdb_id, 'movie', { streams: existing.streams });
             } else {
-                tmdbToStreamCache.set(`tmdb:${movie.tmdb_id}`, {
+                db.setTMDBStreams(movie.tmdb_id, 'movie', {
                     streams: [{
                         url: streamUrl,
                         title: movie.name,
                         quality: movie.quality || null
-                    }],
-                    type: 'movie'
+                    }]
                 });
             }
         }
@@ -124,22 +123,23 @@ function buildTMDBStreamCache(addonInstance) {
     for (const s of series) {
         if (s.tmdb_id) {
             const seriesId = s.series_id || s.id.replace('iptv_series_', '');
-            const existing = tmdbToStreamCache.get(`tmdb:${s.tmdb_id}`);
+            const existing = db.getTMDBStreams(s.tmdb_id);
             if (existing && existing.type === 'series' && existing.seriesIds) {
                 if (!existing.seriesIds.includes(seriesId)) {
                     existing.seriesIds.push(seriesId);
                 }
+                db.setTMDBStreams(s.tmdb_id, 'series', { seriesIds: existing.seriesIds, title: existing.title || s.name });
             } else {
-                tmdbToStreamCache.set(`tmdb:${s.tmdb_id}`, {
+                db.setTMDBStreams(s.tmdb_id, 'series', {
                     seriesIds: [seriesId],
-                    title: s.name,
-                    type: 'series'
+                    title: s.name
                 });
             }
         }
     }
     
-    addonInstance.log?.debug('TMDB stream cache built', { movies: movies.length, series: series.length });
+    const stats = db.getCacheStats();
+    addonInstance.log?.debug('TMDB stream cache built', { movies: movies.length, series: series.length, cached: stats });
 }
 
 function stableStringify(obj) {
@@ -845,7 +845,7 @@ async function createAddon(config) {
                         return { streams: [] };
                     }
                     
-                    const streamData = tmdbToStreamCache.get(`tmdb:${tmdbId}`);
+                    const streamData = db.getTMDBStreams(tmdbId);
                     if (!streamData) {
                         return { streams: [] };
                     }
