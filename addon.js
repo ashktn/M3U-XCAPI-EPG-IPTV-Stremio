@@ -772,6 +772,7 @@ async function createAddon(config) {
         // IMPORTANT: We must ensure 'manifest' object has 'catalogs[].genres' populated BEFORE creating builder
         const builder = new addonBuilder(manifest); 
 
+
         builder.defineCatalogHandler(async (args) => {
             const start = Date.now();
             try {
