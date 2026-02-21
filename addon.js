@@ -857,8 +857,26 @@ async function createAddon(config) {
                                 const infoJson = await infoResp.json();
                                 const episodesObj = infoJson.episodes || {};
                                 
-                                const seasonEpisodes = episodesObj[season] || [];
-                                const matchingEps = seasonEpisodes.filter(e => parseInt(e.episode_num, 10) === episode);
+                                const seasonKey = String(season);
+                                let seasonEpisodes = episodesObj[seasonKey] || episodesObj[season];
+                                
+                                let matchingEps = [];
+                                if (seasonEpisodes && seasonEpisodes.length > 0) {
+                                    matchingEps = seasonEpisodes.filter(e => parseInt(e.episode_num, 10) === episode);
+                                }
+                                
+                                if (matchingEps.length === 0) {
+                                    for (const key of Object.keys(episodesObj)) {
+                                        const epList = episodesObj[key];
+                                        if (Array.isArray(epList)) {
+                                            const found = epList.filter(e => 
+                                                parseInt(e.season, 10) === season && 
+                                                parseInt(e.episode_num, 10) === episode
+                                            );
+                                            matchingEps.push(...found);
+                                        }
+                                    }
+                                }
                                 
                                 if (matchingEps && matchingEps.length > 0) {
                                     const streams = matchingEps.map((ep, idx) => {
@@ -875,10 +893,12 @@ async function createAddon(config) {
                                     });
                                     
                                     if (addonInstance.config.debug) {
-                                        console.log('[DEBUG] Series Episode Stream request', { imdb: id, tmdb: tmdbId, season, episode, count: streams.length });
+                                        console.log('[DEBUG] Series Episode Stream request', { imdb: id, tmdb: tmdbId, season, episode, count: streams.length, availableKeys: Object.keys(episodesObj) });
                                     }
                                     
                                     return { streams };
+                                } else if (addonInstance.config.debug) {
+                                    console.log('[DEBUG] No matching episodes found', { seasonKey, season, episode, availableKeys: Object.keys(episodesObj) });
                                 }
                             }
                         } catch (e) {
