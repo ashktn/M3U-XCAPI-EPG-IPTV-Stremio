@@ -103,12 +103,14 @@ function buildTMDBStreamCache(addonInstance) {
             
             const existing = db.getTMDBStreams(providerKey, movie.tmdb_id);
             if (existing && existing.type === 'movie' && existing.streams) {
-                existing.streams.push({
-                    url: streamUrl,
-                    title: movie.category ? `${movie.name} (${movie.category})` : movie.name,
-                    quality: movie.quality || null
-                });
-                db.setTMDBStreams(providerKey, movie.tmdb_id, 'movie', { streams: existing.streams });
+                if (!existing.streams.some(s => s.url === streamUrl)) {
+                    existing.streams.push({
+                        url: streamUrl,
+                        title: movie.category ? `${movie.name} (${movie.category})` : movie.name,
+                        quality: movie.quality || null
+                    });
+                    db.setTMDBStreams(providerKey, movie.tmdb_id, 'movie', { streams: existing.streams });
+                }
             } else {
                 db.setTMDBStreams(providerKey, movie.tmdb_id, 'movie', {
                     streams: [{
